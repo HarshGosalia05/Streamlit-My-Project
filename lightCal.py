@@ -33,7 +33,7 @@ def init_connection():
         return None
 
 db = init_connection()
-if db:
+if db is not None:
     users_collection = db["users"]
     consumption_collection = db["consumption"]
 
