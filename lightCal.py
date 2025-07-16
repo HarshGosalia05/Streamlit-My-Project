@@ -14,15 +14,21 @@ from dotenv import load_dotenv
 import os
 
 # MongoDB connection
+
+
+load_dotenv()
+MONGO_URI = st.secrets["MONGO_URI"] if "MONGO_URI" in st.secrets else os.getenv("MONGO_URI")
+
 @st.cache_resource
-def init_connection():
+def get_db():
     try:
-        client = pymongo.MongoClient("mongodb://localhost:27017/")
+        client = pymongo.MongoClient(MONGO_URI)
         db = client["EnergyTracker"]
         return db
     except Exception as e:
-        st.error(f"Database connection failed: {e}")
+        st.error(f"Database connection error: {e}")
         return None
+
 
 # Initialize database
 db = init_connection()
