@@ -12,49 +12,24 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv
 import os
-# import pymongo
 
-load_dotenv()
-# MONGO_URI = os.getenv("mongodb://localhost:27017/")
-MONGO_URI = os.getenv("MONGO_URI")
-
-
+# MongoDB connection
 @st.cache_resource
 def init_connection():
-    if not MONGO_URI:
-        st.error("❌ MONGO_URI not found. Please check your .env file.")
-        return None
     try:
-        client = pymongo.MongoClient(MONGO_URI)
+        client = pymongo.MongoClient("mongodb://localhost:27017/")
         db = client["EnergyTracker"]
         return db
     except Exception as e:
         st.error(f"Database connection failed: {e}")
         return None
 
+# Initialize database
 db = init_connection()
 if db is not None:
     users_collection = db["users"]
     consumption_collection = db["consumption"]
-
-
-# # MongoDB connection
-# @st.cache_resource
-# def init_connection():
-#     try:
-#         client = pymongo.MongoClient("mongodb://localhost:27017/")
-#         db = client["EnergyTracker"]
-#         return db
-#     except Exception as e:
-#         st.error(f"Database connection failed: {e}")
-#         return None
-
-# # Initialize database
-# db = init_connection()
-# if db is not None:
-
-#     users_collection = db["users"]
-#     consumption_collection = db["consumption"]
+    data_collection = db["data_collection"]  # New collection for login data
 
 # Utility functions
 def hash_password(password: str) -> str:
@@ -82,28 +57,43 @@ def create_user(username: str, email: str, password: str) -> bool:
         "profile": {
             "city": "",
             "area": "",
-            "age": 0
+            "age": 0,
+            "phone": "",
+            "full_name": "",
+            "occupation": "",
+            "household_size": 1
         }
     }
     
     try:
         users_collection.insert_one(user_data)
         return True
-    except:
+    except Exception as e:
+        st.error(f"Error creating user: {e}")
         return False
-
-    
-    if users_collection is None:
-        return False
-
 
 def authenticate_user(username: str, password: str) -> Optional[Dict]:
-    """Authenticate user login"""
+    """Authenticate user login and store login data"""
     if db is None:
         return None
     
     user = users_collection.find_one({"username": username})
     if user and verify_password(password, user["password"]):
+        # Store login data in data_collection
+        login_data = {
+            "username": username,
+            "login_time": datetime.now(),
+            "login_date": datetime.now().strftime("%Y-%m-%d"),
+            "session_id": str(datetime.now().timestamp()),
+            "ip_address": "localhost",  # You can get actual IP if needed
+            "user_agent": "Streamlit App"
+        }
+        
+        try:
+            data_collection.insert_one(login_data)
+        except Exception as e:
+            st.error(f"Error storing login data: {e}")
+        
         return user
     return None
 
@@ -123,21 +113,25 @@ def save_consumption_data(username: str, appliances: Dict, total_energy: float, 
         "estimated_cost": round(cost, 2)
     }
     
-    # Check if entry for today already exists
-    existing = consumption_collection.find_one({
-        "username": username,
-        "date": today.strftime("%Y-%m-%d")
-    })
-    
-    if existing:
-        consumption_collection.update_one(
-            {"_id": existing["_id"]},
-            {"$set": data}
-        )
-    else:
-        consumption_collection.insert_one(data)
-    
-    return True
+    try:
+        # Check if entry for today already exists
+        existing = consumption_collection.find_one({
+            "username": username,
+            "date": today.strftime("%Y-%m-%d")
+        })
+        
+        if existing:
+            consumption_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": data}
+            )
+        else:
+            consumption_collection.insert_one(data)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error saving consumption data: {e}")
+        return False
 
 def get_user_consumption_data(username: str, days: int = 14) -> List[Dict]:
     """Get user's consumption data for last N days"""
@@ -146,12 +140,31 @@ def get_user_consumption_data(username: str, days: int = 14) -> List[Dict]:
     
     start_date = datetime.now() - timedelta(days=days)
     
-    data = list(consumption_collection.find({
-        "username": username,
-        "timestamp": {"$gte": start_date}
-    }).sort("timestamp", 1))
+    try:
+        data = list(consumption_collection.find({
+            "username": username,
+            "timestamp": {"$gte": start_date}
+        }).sort("timestamp", 1))
+        
+        return data
+    except Exception as e:
+        st.error(f"Error retrieving consumption data: {e}")
+        return []
+
+def get_user_login_data(username: str) -> List[Dict]:
+    """Get user's login history"""
+    if db is None:
+        return []
     
-    return data
+    try:
+        data = list(data_collection.find({
+            "username": username
+        }).sort("login_time", -1).limit(10))
+        
+        return data
+    except Exception as e:
+        st.error(f"Error retrieving login data: {e}")
+        return []
 
 def calculate_energy_consumption(appliances: Dict) -> float:
     """Calculate total energy consumption"""
@@ -234,82 +247,23 @@ def load_css():
         transform: translateY(-2px);
         box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
+    
+    .profile-section {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+        border-left: 4px solid #4ECDC4;
+    }
+    
+    .login-history {
+        background: #fff3cd;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+    }
     </style>
     """, unsafe_allow_html=True)
-
-# Authentication UI
-# def show_login_page():
-#     st.markdown('<h1 class="main-header">⚡ Energy Tracker Login</h1>', unsafe_allow_html=True)
-    
-#     tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
-    
-#     with tab1:
-#         st.subheader("Welcome Back!")
-#         with st.form("login_form"):
-#             username = st.text_input("Username", placeholder="Enter your username")
-#             password = st.text_input("Password", type="password", placeholder="Enter your password")
-            
-#             if st.form_submit_button("Login", use_container_width=True):
-#                 if username and password:
-#                     user = authenticate_user(username, password)
-#                     if user:
-#                         st.session_state.user = user
-#                         st.success("Login successful!")
-#                         st.rerun()
-#                     else:
-#                         st.error("Invalid username or password")
-#                 else:
-#                     st.warning("Please fill in all fields")
-    
-#     with tab2:
-#         st.subheader("Create New Account")
-#         with st.form("signup_form"):
-#             new_username = st.text_input("Username", placeholder="Choose a username")
-#             new_email = st.text_input("Email", placeholder="Enter your email")
-#             new_password = st.text_input("Password", type="password", placeholder="Create a password")
-#             confirm_password = st.text_input("Confirm Password", type="password", placeholder="Confirm your password")
-            
-#             if st.form_submit_button("Sign Up", use_container_width=True):
-#                 if new_username and new_email and new_password and confirm_password:
-#                     if new_password == confirm_password:
-#                         if create_user(new_username, new_email, new_password):
-#                             st.success("Account created successfully! Please login.")
-#                         else:
-#                             st.error("Username already exists or database error")
-#                     else:
-#                         st.error("Passwords do not match")
-#                 else:
-#                     st.warning("Please fill in all fields")
-
-import streamlit as st
-from pymongo import MongoClient
-
-# ---------- MongoDB Setup ----------
-client = MongoClient("mongodb://localhost:27017/")
-db = client["Workshop"]
-collection = db["users"]
-
-
-# ---------- Authenticate User ----------
-def authenticate_user(username, password):
-    if db is None:
-        return None
-    return collection.find_one({"username": username, "password": password})
-
-
-# ---------- Create New User ----------
-def create_user(username, email, password):
-    if db is None:
-        return False
-    if collection.find_one({"username": username}):
-        return False  # Username already taken
-    collection.insert_one({
-        "username": username,
-        "email": email,
-        "password": password
-    })
-    return True
-
 
 # ---------- Login / Signup Page ----------
 def show_login_page():
@@ -354,27 +308,6 @@ def show_login_page():
                         st.error("❌ Passwords do not match")
                 else:
                     st.warning("⚠️ Please fill in all fields")
-
-
-# ---------- Main App Entry ----------
-def main():
-    if "user" not in st.session_state:
-        show_login_page()
-        st.stop()
-
-    st.title("⚡ Energy Tracker Dashboard")
-    st.write(f"👋 Welcome, **{st.session_state.user['username']}**")
-    # Add your dashboard logic here
-
-
-if __name__ == "__main__":
-    main()
-
-
-
-
-
-
 
 # Main dashboard
 def show_dashboard():
@@ -638,36 +571,97 @@ def show_profile(username: str):
         st.error("User data not found.")
         return
     
+    # Display current profile information
+    st.markdown('<div class="profile-section">', unsafe_allow_html=True)
+    st.subheader("📋 Current Profile Information")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write(f"**👤 Username:** {user['username']}")
+        st.write(f"**📧 Email:** {user.get('email', 'Not provided')}")
+        st.write(f"**🏙️ City:** {user.get('profile', {}).get('city', 'Not provided')}")
+        st.write(f"**📍 Area:** {user.get('profile', {}).get('area', 'Not provided')}")
+    
+    with col2:
+        st.write(f"**👶 Age:** {user.get('profile', {}).get('age', 'Not provided')}")
+        st.write(f"**📅 Account Created:** {user.get('created_at', 'Unknown').strftime('%Y-%m-%d %H:%M:%S') if isinstance(user.get('created_at'), datetime) else 'Unknown'}")
+        st.write(f"**📱 Phone:** {user.get('profile', {}).get('phone', 'Not provided')}")
+        st.write(f"**💼 Occupation:** {user.get('profile', {}).get('occupation', 'Not provided')}")
+    
+    st.write(f"**👥 Household Size:** {user.get('profile', {}).get('household_size', 'Not provided')}")
+    st.write(f"**🏠 Full Name:** {user.get('profile', {}).get('full_name', 'Not provided')}")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    
+    
+    # Update Profile Form
+    st.subheader("✏️ Update Profile Information")
+    
     with st.form("profile_form"):
-        st.subheader("📝 Update Profile Information")
-        
         col1, col2 = st.columns(2)
         
         with col1:
+            full_name = st.text_input("👤 Full Name", value=user.get('profile', {}).get('full_name', ''))
             city = st.text_input("🏙️ City", value=user.get('profile', {}).get('city', ''))
             area = st.text_input("📍 Area", value=user.get('profile', {}).get('area', ''))
+            phone = st.text_input("📱 Phone", value=user.get('profile', {}).get('phone', ''))
         
         with col2:
-            age = st.number_input("👶 Age", min_value=10, max_value=120, 
-                                value=user.get('profile', {}).get('age', 25))
+            # Fix for age input: ensure the value is at least min_value
+            current_age = user.get('profile', {}).get('age', 25)
+            # If current age is less than min_value, use min_value instead
+            age_value = max(current_age, 10) if current_age is not None else 25
+            
+            age = st.number_input("👶 Age", min_value=10, max_value=120, value=age_value)
             email = st.text_input("📧 Email", value=user.get('email', ''))
+            occupation = st.text_input("💼 Occupation", value=user.get('profile', {}).get('occupation', ''))
+            
+            # Fix for household size: ensure the value is at least min_value
+            current_household = user.get('profile', {}).get('household_size', 1)
+            household_value = max(current_household, 1) if current_household is not None else 1
+            
+            household_size = st.number_input("👥 Household Size", min_value=1, max_value=20,
+                                           value=household_value)
         
-        if st.form_submit_button("💾 Update Profile"):
+        if st.form_submit_button("💾 Update Profile", use_container_width=True):
             update_data = {
                 "$set": {
+                    "profile.full_name": full_name,
                     "profile.city": city,
                     "profile.area": area,
                     "profile.age": age,
-                    "email": email
+                    "profile.phone": phone,
+                    "profile.occupation": occupation,
+                    "profile.household_size": household_size,
+                    "email": email,
+                    "updated_at": datetime.now()
                 }
             }
             
-            if db is not None:
-                users_collection.update_one({"username": username}, update_data)
-                st.success("✅ Profile updated successfully!")
-            else:
-                st.error("❌ Database connection error.")
+            try:
+                if db is not None:
+                    users_collection.update_one({"username": username}, update_data)
+                    st.success("✅ Profile updated successfully!")
+                    st.rerun()
+                else:
+                    st.error("❌ Database connection error.")
+            except Exception as e:
+                st.error(f"❌ Error updating profile: {e}")
 
+    # Login History
+    st.subheader("🔒 Recent Login History")
+    login_history = get_user_login_data(username)
+    
+    if login_history:
+        for i, login in enumerate(login_history[:5]):  # Show last 5 logins
+            login_time = login['login_time'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(login['login_time'], datetime) else str(login['login_time'])
+            st.markdown(f'<div class="login-history">**Login {i+1}:** {login_time}</div>', unsafe_allow_html=True)
+    else:
+        st.info("No login history available.")
+
+                
 def show_export_data(username: str):
     st.markdown('<h2 class="main-header">📁 Export Data</h2>', unsafe_allow_html=True)
     
@@ -742,6 +736,7 @@ def show_export_data(username: str):
     
     with col3:
         st.metric("🔋 Total Energy", f"{df['Total Energy (kWh)'].sum():.2f} kWh")
+
 
 # Main app logic
 def main():
